@@ -8,11 +8,14 @@
 //! `sensors/pdh.rs`) — no per-tick subprocess, no COM/WMI. All data is
 //! strictly real; missing sources -> honest "—".
 
+mod logger;
 mod sensors;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use logger::{LogStatus, TempLogger};
 use sensors::{tray::decide, ChipProfile, PdhProvider, SensorSnapshot};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, Submenu},
@@ -98,6 +101,14 @@ struct AppState {
     /// toggled from (tray menu or the in-window Options menu) — see
     /// `set_mini_state`.
     mini_item: CheckMenuItem<tauri::Wry>,
+    /// CSV temperature logger, fed from the poll loop.
+    logger: Mutex<TempLogger>,
+    /// Tray-menu "Log to file" checkmark, kept in sync with the logger.
+    log_item: CheckMenuItem<tauri::Wry>,
+    /// "Enable logging on startup" is honored once, on the first settings
+    /// sync from the frontend — later settings changes must not restart a
+    /// session the user deliberately stopped.
+    startup_logging_handled: AtomicBool,
 }
 
 /// Once an overheat action fires, require the package temp to drop this many
@@ -138,6 +149,10 @@ struct AppSettings {
     /// Rust can drive the NATIVE title-bar chrome (see update_settings).
     #[serde(rename = "theme", default = "default_theme")]
     theme: String,
+    #[serde(rename = "logOnStartup", default)]
+    log_on_startup: bool,
+    #[serde(rename = "logIntervalSec", default = "default_log_interval")]
+    log_interval_secs: u64,
 }
 fn default_theme() -> String { "dark".into() }
 fn default_c() -> String { "c".into() }
@@ -146,6 +161,7 @@ fn default_overheat() -> f64 { 95.0 }
 fn default_overheat_action() -> String { "notify".into() }
 fn default_true() -> bool { true }
 fn default_polling_ms() -> u64 { 1500 }
+fn default_log_interval() -> u64 { logger::DEFAULT_INTERVAL_SECS }
 /// Polling interval is user-controlled but must stay sane — never busy-loop
 /// the PDH query, never sleep so long the UI feels dead.
 const MIN_POLL_MS: u64 = 500;
@@ -169,6 +185,8 @@ impl Default for AppSettings {
             taskbar_on: true,
             taskbar_accent: true,
             theme: default_theme(),
+            log_on_startup: false,
+            log_interval_secs: default_log_interval(),
         }
     }
 }
@@ -200,6 +218,9 @@ impl AppSettings {
     }
     fn polling_interval(&self) -> Duration {
         Duration::from_millis(self.polling_interval_ms.clamp(MIN_POLL_MS, MAX_POLL_MS))
+    }
+    fn log_interval(&self) -> Duration {
+        Duration::from_secs(self.log_interval_secs.clamp(logger::MIN_INTERVAL_SECS, logger::MAX_INTERVAL_SECS))
     }
 }
 
@@ -294,7 +315,69 @@ fn update_settings(
     if let Some(snap) = state.latest.blocking_lock().clone() {
         update_tray(&app, &snap, &parsed);
     }
+
+    if !state.startup_logging_handled.swap(true, Ordering::SeqCst) && parsed.log_on_startup {
+        set_logging_inner(&app, &state, true);
+    }
     Ok(())
+}
+
+// ---------- temperature logging ----------
+
+/// Tell the UI (menus, status bar, Settings) and the tray checkmark where
+/// logging stands.
+fn publish_log_status(app: &tauri::AppHandle, state: &AppState, status: &LogStatus) {
+    let _ = state.log_item.set_checked(status.active);
+    let _ = app.emit("log-status", status.clone());
+}
+
+/// Start/stop logging from any entry point (Tools menu, tray menu, startup
+/// setting). Starting writes the first row immediately from the latest
+/// snapshot, so the file exists — or the error is known — right away.
+/// Sync callers only (commands, tray handler): uses `blocking_lock`.
+fn set_logging_inner(app: &tauri::AppHandle, state: &AppState, active: bool) -> LogStatus {
+    let settings = state.settings.blocking_lock().clone();
+    let latest = state.latest.blocking_lock().clone();
+    let status = {
+        let mut log = state.logger.blocking_lock();
+        if active {
+            if log.start().is_ok() {
+                if let Some(snap) = latest.as_ref() {
+                    log.on_snapshot(snap, settings.unit_is_f(), settings.log_interval());
+                }
+            }
+        } else {
+            log.stop();
+        }
+        log.status()
+    };
+    publish_log_status(app, state, &status);
+    status
+}
+
+#[tauri::command]
+fn set_logging(active: bool, state: tauri::State<'_, Arc<AppState>>, app: tauri::AppHandle) -> LogStatus {
+    set_logging_inner(&app, &state, active)
+}
+
+#[tauri::command]
+fn get_log_status(state: tauri::State<'_, Arc<AppState>>) -> LogStatus {
+    state.logger.blocking_lock().status()
+}
+
+/// Open the log folder in Explorer, selecting the current file if there is one.
+#[tauri::command]
+fn open_log_folder(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    let (dir, file) = {
+        let log = state.logger.blocking_lock();
+        (log.dir().to_path_buf(), log.current_file().map(|p| p.to_path_buf()))
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
+    match file {
+        Some(f) if f.exists() => tauri_plugin_opener::reveal_item_in_dir(f),
+        _ => tauri_plugin_opener::open_path(&dir, None::<&str>),
+    }
+    .map_err(|e| e.to_string())
 }
 
 /// Windows accent blue — matches `ACCENT` in `src/app/theme.ts`.
@@ -520,6 +603,16 @@ fn start_poll_loop(app: tauri::AppHandle, state: Arc<AppState>) {
                 }
 
                 update_tray(&app, &snap, &settings);
+
+                let log_status = {
+                    let mut log = state.logger.lock().await;
+                    log.on_snapshot(&snap, settings.unit_is_f(), settings.log_interval())
+                        .then(|| log.status())
+                };
+                if let Some(status) = log_status {
+                    publish_log_status(&app, &state, &status);
+                }
+
                 *state.latest.lock().await = Some(snap.clone());
                 let _ = app.emit("sensor-update", snap);
             }
@@ -554,6 +647,7 @@ pub fn run() {
             let unit_menu = Submenu::with_items(app, "Unit", true, &[&unit_c, &unit_f])?;
 
             let refresh = MenuItem::with_id(app, "refresh", "Refresh sensors", true, None::<&str>)?;
+            let log_item = CheckMenuItem::with_id(app, "log", "Log to file", true, false, None::<&str>)?;
             let exit = MenuItem::with_id(app, "exit", "Exit", true, None::<&str>)?;
             let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
             let sep2 = tauri::menu::PredefinedMenuItem::separator(app)?;
@@ -567,6 +661,7 @@ pub fn run() {
                     &unit_menu,
                     &sep2,
                     &refresh,
+                    &log_item,
                     &exit,
                 ],
             )?;
@@ -611,6 +706,12 @@ pub fn run() {
                             let _ = w.emit("refresh-sensors", ());
                         }
                     }
+                    "log" => {
+                        if let Some(state) = app.try_state::<Arc<AppState>>() {
+                            let active = state.logger.blocking_lock().is_active();
+                            set_logging_inner(app, &state, !active);
+                        }
+                    }
                     "exit" => app.exit(0),
                     _ => {}
                 })
@@ -624,6 +725,10 @@ pub fn run() {
                 profile.as_ref().map(|p| p.name).unwrap_or("unknown"),
                 profile.as_ref().map(|p| p.model).unwrap_or("")
             );
+            let log_dir = app
+                .path()
+                .app_log_dir()
+                .unwrap_or_else(|_| std::env::temp_dir().join("ARMtemp"));
             let state = Arc::new(AppState {
                 provider,
                 latest: Mutex::new(None),
@@ -633,6 +738,9 @@ pub fn run() {
                 overheat_armed: Mutex::new(true),
                 unit_c_item: unit_c.clone(),
                 mini_item: mini.clone(),
+                logger: Mutex::new(TempLogger::new(log_dir)),
+                log_item: log_item.clone(),
+                startup_logging_handled: AtomicBool::new(false),
             });
             app.manage(state.clone());
 
@@ -707,7 +815,10 @@ pub fn run() {
             update_settings,
             exit_app,
             set_mini_state,
-            get_detection_report
+            get_detection_report,
+            set_logging,
+            get_log_status,
+            open_log_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running ARMtemp");

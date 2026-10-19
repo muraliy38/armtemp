@@ -1,11 +1,13 @@
 import { useRef, useState } from "react";
-import { AppSettings, UiStyle, TrayStyle, ThemeChoice } from "../app/types";
+import { AppSettings, LogStatus, UiStyle, TrayStyle, ThemeChoice } from "../app/types";
 
 type Tab = "general" | "display" | "notif" | "taskbar";
 
 interface Props {
   settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
+  logStatus: LogStatus | null;
+  onOpenLogFolder: () => void;
   onClose: () => void;
 }
 
@@ -14,7 +16,7 @@ interface Props {
 // and OK / Cancel / Apply buttons. Changes apply live (that's how the app
 // works everywhere); Cancel reverts to the state captured when the dialog
 // opened (or when Apply was last pressed) — genuine dialog semantics.
-export function SettingsDialog({ settings, update, onClose }: Props) {
+export function SettingsDialog({ settings, update, logStatus, onOpenLogFolder, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("general");
   const baseline = useRef<AppSettings>(settings);
 
@@ -57,7 +59,14 @@ export function SettingsDialog({ settings, update, onClose }: Props) {
         </div>
 
         <div className="tab-panel">
-          {tab === "general" && <GeneralTab settings={settings} update={update} />}
+          {tab === "general" && (
+            <GeneralTab
+              settings={settings}
+              update={update}
+              logStatus={logStatus}
+              onOpenLogFolder={onOpenLogFolder}
+            />
+          )}
           {tab === "display" && <DisplayTab settings={settings} update={update} />}
           {tab === "notif" && <NotifTab settings={settings} update={update} />}
           {tab === "taskbar" && <TaskbarTab settings={settings} update={update} />}
@@ -144,9 +153,13 @@ function Group({ legend, children }: { legend: string; children: React.ReactNode
 function GeneralTab({
   settings,
   update,
+  logStatus,
+  onOpenLogFolder,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
+  logStatus: LogStatus | null;
+  onOpenLogFolder: () => void;
 }) {
   return (
     <>
@@ -181,6 +194,41 @@ function GeneralTab({
             <span className="num-unit">ms</span>
           </span>
         </label>
+      </Group>
+      <Group legend="Logging">
+        <Check
+          label="Enable logging on startup"
+          checked={settings.logOnStartup}
+          onChange={(v) => update({ logOnStartup: v })}
+        />
+        <label className="select-row">
+          <span>Logging interval</span>
+          <span className="num-wrap">
+            <input
+              type="number"
+              className="num-input"
+              min={1}
+              max={3600}
+              step={1}
+              value={settings.logIntervalSec}
+              onChange={(e) => {
+                const n = Math.round(Number(e.target.value));
+                if (Number.isFinite(n) && n >= 1) update({ logIntervalSec: Math.min(n, 3600) });
+              }}
+            />
+            <span className="num-unit">sec</span>
+          </span>
+        </label>
+        <div className="log-folder-row">
+          <span className="dlg-hint log-folder-path" title={logStatus?.dir}>
+            {logStatus ? `CSV files are saved to ${logStatus.dir}` : "CSV files are saved to the app's log folder"}
+          </span>
+          <button className="btn" onClick={onOpenLogFolder}>
+            Open folder
+          </button>
+        </div>
+        {logStatus?.error && !logStatus.active && <div className="dlg-hint log-error">{logStatus.error}</div>}
+        <div className="dlg-hint">Start or stop logging any time from Tools → Log to file or the tray menu.</div>
       </Group>
     </>
   );

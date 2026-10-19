@@ -128,7 +128,7 @@ Users can always override AI agent version decisions:
 ## Key directories
 - `src/app/` - TypeScript types, theme tokens, hooks (useSettings, useSensors)
 - `src/components/` - React components (MenuBar, ProcessorInfo, TempTable, SettingsDialog, OverheatDialog, AboutDialog, MiniMode)
-- `src-tauri/src/` - Rust backend (lib.rs = app wiring, sensors/ = telemetry)
+- `src-tauri/src/` - Rust backend (lib.rs = app wiring, logger.rs = CSV temperature logging, sensors/ = telemetry)
 - `src-tauri/src/sensors/` - Sensor providers (pdh.rs = primary, identity.rs = raw CPU identity signals from the registry/topology, chips.rs = profiles + detection, tray.rs = color/mode logic, tray_render.rs = Windows GDI digit rendering, types.rs = data shapes)
 - `tools/` - Phase 0 sensor probe scripts (PowerShell) + icon generator
 ## Real-data contract (CRITICAL)
@@ -143,7 +143,7 @@ Users can always override AI agent version decisions:
 ## Main window layout structure
 The application displays all sensor information in a single window matching Core Temp's actual layout:
 1. **Native title bar** — the OS draws it (icon, title, minimize/close); the window is decorated and opaque (no custom chrome, no transparency/blur). Dark/light native chrome follows the app theme via `getCurrentWindow().setTheme()`.
-2. **Menu Bar** (`src/components/MenuBar.tsx`) — File (Exit) / Options (Settings, Overheat protection, Toggle Mini Mode, Always on top) / Tools (Refresh sensors, Copy detection report) / Help (About ARMtemp). Rendered as themed HTML dropdowns (a native HMENU doesn't follow dark/light mode on Windows) styled to look like real Win32 menus. No unit toggle — Fahrenheit lives in Settings → Display. Launch flags `--settings` / `--overheat` / `--about` deep-link the dialogs. "Copy detection report" (`get_detection_report` command) copies a plain-text dump of every raw CPU identity signal plus how the chip was matched, for diagnosing misdetections on machines the maintainer doesn't own (see issue #2).
+2. **Menu Bar** (`src/components/MenuBar.tsx`) — File (Exit) / Options (Settings, Overheat protection, Toggle Mini Mode, Always on top) / Tools (Refresh sensors, Copy detection report, Log to file, Open log folder) / Help (About ARMtemp). Rendered as themed HTML dropdowns (a native HMENU doesn't follow dark/light mode on Windows) styled to look like real Win32 menus. No unit toggle — Fahrenheit lives in Settings → Display. Launch flags `--settings` / `--overheat` / `--about` deep-link the dialogs. "Copy detection report" (`get_detection_report` command) copies a plain-text dump of every raw CPU identity signal plus how the chip was matched, for diagnosing misdetections on machines the maintainer doesn't own (see issue #2).
 3. **Select CPU** row (combo + `[N] Core(s) [N] Thread(s)` sunken count boxes) + **Processor Information** group box (Win32 etched border, sunken read-only value fields): Model / Platform / Frequency / CPUID full rows; `Boost | Lithography` and `Throttle | TDP` pairs. VID and Revision are intentionally omitted (permanently unavailable on Snapdragon X); Throttle is the live ACPI passive-limit status (red "Yes" while the firmware throttles). CPUID shows the real registry `Identifier` string (e.g. "ARMv8 (64-bit) Family 8 Model 2 Revision 201"), not a repeat of the Model field's marketing string.
 4. **Temperature Readings** group box — Tj. Max row, one **CPU Temp** row (Cur. | Min. | Max. | Avg., **colored temperature text** — the app's single honest CPU temperature), then per-core rows (Core # | Load | Min. | Max. | Avg., plain text — genuinely per-core).
 5. **Status Bar** — thin native strip with CPU Temp / Low / High (session, since app start).
@@ -180,6 +180,7 @@ The application displays all sensor information in a single window matching Core
 - **`Processor Information` instance names are `group,core`** (e.g. `0,3`) plus `group,_Total`/bare `_Total` roll-ups — parse the trailing index, skip totals. Differs from the flat `0`.. `9` index the old WMI-based path used.
 - **PowerShell `$_` mangling** (only relevant to the historical `tools/*.ps1` probe scripts, not the app itself): running PowerShell via `bash -c "powershell -Command '...$_...'"` corrupts variables. Invoke those scripts with `-File`.
 - Polling interval default: 1500ms (configurable in Settings → General)
+- **Temperature logging** (`logger.rs`): owned by the backend and fed from the poll loop, so it runs while the window is hidden. Toggled via the `set_logging` command (Tools menu, tray "Log to file") and `logOnStartup` (honored once, on the first `update_settings` sync). State is broadcast as the `log-status` event (`useLogging` hook). Missing readings are written as empty CSV cells — the real-data contract applies to logs too. A unit or core-count change rotates to a new file so headers always match rows.
 ## Testing
 - Manual testing required for sensor data (real hardware only — runs on Snapdragon X machines)
 - Test temperature unit toggle (°C/°F) updates everywhere (table, status bar, tray)

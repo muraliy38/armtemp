@@ -6,7 +6,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20on%20ARM64-0078D4)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)
-![Version](https://img.shields.io/badge/version-0.4.6-blue)
+![Version](https://img.shields.io/badge/version-0.5.0-blue)
 
 </div>
 
@@ -23,6 +23,7 @@ ARMtemp reads real ACPI thermal-zone sensors and displays a single honest CPU te
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [How it reads sensors](#how-it-reads-sensors-the-important-part)
+- [Temperature logging](#temperature-logging)
 - [Build & run](#build--run)
 - [Project layout](#project-layout)
 - [Acknowledgments](#acknowledgments)
@@ -37,6 +38,7 @@ ARMtemp reads real ACPI thermal-zone sensors and displays a single honest CPU te
 - Mini mode — the same window, stripped to the model name, the CPU temperature, and an averaged per-core load row
 - Live system-tray icon showing the current CPU temperature, with a right-click menu
 - Overheat protection — notify, sleep, or shut down at a configurable threshold
+- Core Temp-style temperature logging to CSV — see [Temperature logging](#temperature-logging)
 - Close-to-tray, start-with-Windows, °C/°F, dark/light theme
 - A single NSIS installer that upgrades an existing install in place (see [Updating](#updating))
 
@@ -80,6 +82,18 @@ Reading temperatures on Snapdragon X under Windows is genuinely hard — the sta
 ARMtemp's working data source is the **`Thermal Zone Information`** performance-counter object, which exposes ACPI thermal zones (`\_SB.TZxx`). Sentinels/inactive zones (≤ 0 °C) are filtered out; the rest are converted from Kelvin to °C. The hottest valid zone is reported as the single CPU temperature — there is no per-core thermal surface on this firmware, so ARMtemp doesn't attribute a temperature to any individual core; per-core rows show real per-core load instead.
 
 **Implementation note:** ARMtemp reads these counters natively via the Windows **PDH** (Performance Data Helper) API (`pdh.dll`) — no subprocess, no COM/WMI. This also sidesteps the failure the Rust `wmi` crate's COM/`IWbemServices` path hit when called from inside a Tauri process (`WBEM_E_NOT_FOUND`; see [`SENSORS.md`](./SENSORS.md) §7 for that history). A dedicated worker thread owns the PDH query handles and collects once per poll tick (~1.5–2s); the same counters also yield a genuinely *live* CPU frequency, unlike `Win32_Processor.CurrentClockSpeed`, which mirrors the static max on this firmware.
+
+---
+
+## Temperature logging
+
+Turn logging on from **Tools → Log to file** or the tray menu's **Log to file**; a `● Logging` marker appears in the status bar while it runs. To start logging automatically every launch, tick **Settings → General → Enable logging on startup**. Logging happens in the backend, so it keeps going while ARMtemp is closed to the tray.
+
+- **Where:** `%LOCALAPPDATA%\com.armtemp.app\logs\` — **Tools → Open log folder** (or the button in Settings) opens it. Each session gets its own file, e.g. `ARMtemp Log 2026-10-19 14-30-05.csv`.
+- **How often:** one row per **Logging interval** (Settings → General, 1–3600 s, default 10 s). Rows land on sensor poll ticks, so an interval shorter than the polling interval is effectively the polling interval.
+- **Columns:** `Time`, `CPU Temp (°C|°F)`, `Throttling`, `CPU Speed (MHz)`, `Avg Load (%)`, then `Core #N Load (%)` per core. The temperature is the same single CPU temperature the app shows — there are no per-core temperature columns because the firmware exposes no per-core sensor.
+- **Honest blanks:** a reading with no live source that tick is written as an empty cell, never a guessed value.
+- Switching °C/°F while logging starts a new file so the header always matches its rows. Files are UTF-8 with a BOM so Excel shows `°` correctly.
 
 ---
 

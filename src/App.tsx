@@ -5,6 +5,7 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useSettings } from "./app/useSettings";
 import { useSensors } from "./app/useSensors";
+import { useLogging } from "./app/useLogging";
 import { themeVars, ACCENT } from "./app/theme";
 import { ISSUES_URL } from "./app/links";
 import { MenuBar } from "./components/MenuBar";
@@ -21,6 +22,7 @@ import { DashboardView } from "./components/layouts/DashboardView";
 export default function App() {
   const { settings, update, loaded } = useSettings();
   const { snap, status: sensorStatus } = useSensors();
+  const logging = useLogging();
   const [mini, setMini] = useState(false);
   // Keep the tray menu's "Mini-mode" checkmark in sync no matter where mini
   // mode is toggled from (tray menu or Options → Toggle Mini Mode).
@@ -93,6 +95,7 @@ export default function App() {
       <div ref={shellRef} className="window-shell">
         <MenuBar
           alwaysOnTop={settings.alwaysOnTop}
+          logging={logging.status?.active ?? false}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenOverheat={() => setOverheatOpen(true)}
           onOpenAbout={() => setAboutOpen(true)}
@@ -105,6 +108,8 @@ export default function App() {
               .then((text) => navigator.clipboard.writeText(text))
               .catch(() => {})
           }
+          onToggleLogging={() => logging.setActive(!logging.status?.active)}
+          onOpenLogFolder={logging.openFolder}
           onExit={() => invoke("exit_app").catch(() => {})}
         />
 
@@ -134,11 +139,17 @@ export default function App() {
           )}
         </div>
 
-        {!mini && settings.statusBarOn && <StatusBar snap={snap} unit={unit} />}
+        {!mini && settings.statusBarOn && <StatusBar snap={snap} unit={unit} log={logging.status} />}
       </div>
 
       {settingsOpen && (
-        <SettingsDialog settings={settings} update={update} onClose={() => setSettingsOpen(false)} />
+        <SettingsDialog
+          settings={settings}
+          update={update}
+          logStatus={logging.status}
+          onOpenLogFolder={logging.openFolder}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
       {overheatOpen && (
         <OverheatDialog

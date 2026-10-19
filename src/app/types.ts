@@ -62,6 +62,9 @@ export interface AppSettings {
   alwaysOnTop: boolean;
   hideWhenMinimized: boolean;
   pollingIntervalMs: number;
+  // Logging (General tab)
+  logOnStartup: boolean;
+  logIntervalSec: number;
   // Display
   uiStyle: UiStyle;
   theme: ThemeChoice;
@@ -91,6 +94,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   alwaysOnTop: false,
   hideWhenMinimized: false,
   pollingIntervalMs: 1500,
+  // Logging
+  logOnStartup: false,
+  logIntervalSec: 10,
   // Display
   uiStyle: "classic",
   theme: "dark",
@@ -110,3 +116,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   overheatThreshold: 95,
   overheatAction: "notify",
 };
+
+// Mirrors `logger::LogStatus` in src-tauri/src/logger.rs.
+export interface LogStatus {
+  active: boolean;
+  dir: string;
+  file: string | null;
+  rows: number;
+  error: string | null;
+}

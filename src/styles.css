@@ -714,3 +714,26 @@ img {
   display: flex;
   flex-direction: column;
 }
+
+/* ---------- temperature logging indicator (status bar) ---------- */
+.sb-log {
+  color: var(--accent);
+}
+.sb-log-error {
+  color: #e0473a;
+}
+.log-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 0;
+}
+.log-folder-path {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  overflow-wrap: anywhere;
+}
+.log-error {
+  color: #e0473a;
+}

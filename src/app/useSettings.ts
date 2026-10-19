@@ -27,6 +27,8 @@ function backendSettings(s: AppSettings) {
     taskbarOn: s.taskbarOn,
     taskbarAccent: s.taskbarAccent,
     theme: s.theme,
+    logOnStartup: s.logOnStartup,
+    logIntervalSec: s.logIntervalSec,
   };
 }
 

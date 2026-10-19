@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 interface MenuBarProps {
   alwaysOnTop: boolean;
+  logging: boolean;
   onOpenSettings: () => void;
   onOpenOverheat: () => void;
   onOpenAbout: () => void;
@@ -10,6 +11,8 @@ interface MenuBarProps {
   onToggleAlwaysOnTop: () => void;
   onRefresh: () => void;
   onCopyDetectionReport: () => void;
+  onToggleLogging: () => void;
+  onOpenLogFolder: () => void;
   onExit: () => void;
 }
 
@@ -20,6 +23,7 @@ type MenuKey = "file" | "options" | "tools" | "help";
 // this reads as native chrome while staying theme-correct.
 export function MenuBar({
   alwaysOnTop,
+  logging,
   onOpenSettings,
   onOpenOverheat,
   onOpenAbout,
@@ -28,6 +32,8 @@ export function MenuBar({
   onToggleAlwaysOnTop,
   onRefresh,
   onCopyDetectionReport,
+  onToggleLogging,
+  onOpenLogFolder,
   onExit,
 }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
@@ -114,6 +120,18 @@ export function MenuBar({
             </button>
             <button className="menu-entry" role="menuitem" onClick={() => run(onCopyDetectionReport)}>
               Copy detection report
+            </button>
+            <div className="menu-sep" />
+            <button
+              className={`menu-entry ${logging ? "menu-check" : ""}`}
+              role="menuitemcheckbox"
+              aria-checked={logging}
+              onClick={() => run(onToggleLogging)}
+            >
+              Log to file
+            </button>
+            <button className="menu-entry" role="menuitem" onClick={() => run(onOpenLogFolder)}>
+              Open log folder
             </button>
           </div>
         )}
